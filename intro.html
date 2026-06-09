@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Food Quest — Introducción</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: 'Press Start 2P', monospace;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    /* Video pantalla completa, manteniendo proporción */
+    video {
+      position: fixed; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+
+    /* Overlay de "Toca para iniciar" si autoplay falla */
+    .start-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.85);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 20;
+      transition: opacity 0.5s;
+    }
+    .start-overlay.hidden { opacity: 0; pointer-events: none; }
+
+    .start-icon {
+      width: 100px; height: 100px;
+      background: #FFD166;
+      border: 6px solid #6B3FA0;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 6px 6px 0 rgba(0,0,0,0.5);
+      margin-bottom: 2rem;
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { transform: scale(1); }
+      50%     { transform: scale(1.1); box-shadow: 0 0 40px rgba(255,209,102,0.6); }
+    }
+    .start-icon::after {
+      content: '';
+      width: 0; height: 0;
+      border-left: 32px solid #2a1f4a;
+      border-top: 22px solid transparent;
+      border-bottom: 22px solid transparent;
+      margin-left: 8px;
+    }
+    .start-text {
+      font-size: 1rem; letter-spacing: 3px;
+      text-shadow: 3px 3px 0 #2a1f4a;
+    }
+
+    /* Botón saltar */
+    .skip {
+      position: fixed;
+      bottom: 2rem; right: 2rem;
+      z-index: 30;
+      font-family: inherit;
+      font-size: 0.8rem;
+      padding: 0.9rem 1.4rem;
+      background: rgba(107, 63, 160, 0.85);
+      color: #fff;
+      border: 3px solid #FFD166;
+      letter-spacing: 2px;
+      cursor: pointer;
+      text-shadow: 2px 2px 0 #2a1f4a;
+      box-shadow: 3px 3px 0 rgba(0,0,0,0.5);
+      transition: transform 0.1s;
+      opacity: 0;
+      animation: fadeIn 0.5s 2s forwards;
+    }
+    @keyframes fadeIn { to { opacity: 1; } }
+    .skip:hover { background: rgba(139, 95, 192, 0.95); transform: translate(-2px, -2px); }
+    .skip:active { transform: translate(2px, 2px); }
+
+    /* Barra de progreso minimalista abajo */
+    .progress {
+      position: fixed;
+      bottom: 0; left: 0;
+      height: 4px;
+      background: #FFD166;
+      width: 0%;
+      z-index: 25;
+      box-shadow: 0 0 8px #FFD166;
+      transition: width 0.2s linear;
+    }
+
+    /* Mensaje de "Cargando mundo..." al terminar */
+    .loading {
+      position: fixed; inset: 0;
+      background: linear-gradient(180deg, #1a2a6c 0%, #4a3a9c 50%, #6B3FA0 100%);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 40;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.6s;
+    }
+    .loading.visible { opacity: 1; pointer-events: auto; }
+    .loading-text {
+      font-size: 1.2rem;
+      color: #FFD166;
+      letter-spacing: 4px;
+      text-shadow: 3px 3px 0 #2a1f4a;
+      margin-top: 2rem;
+    }
+    .loading-dots::after {
+      content: '';
+      animation: dots 1.4s infinite;
+    }
+    @keyframes dots {
+      0%   { content: ''; }
+      25%  { content: '.'; }
+      50%  { content: '..'; }
+      75%  { content: '...'; }
+    }
+    .loading-spinner {
+      width: 60px; height: 60px;
+      border: 6px solid rgba(255,255,255,0.2);
+      border-top-color: #FFD166;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <video id="video" playsinline preload="auto">
+    <source src="intro.mp4" type="video/mp4">
+    Tu navegador no soporta video HTML5.
+  </video>
+
+  <div class="progress" id="progress"></div>
+
+  <!-- Overlay si autoplay falla (móviles, Safari sin sonido) -->
+  <div class="start-overlay" id="startOverlay">
+    <div class="start-icon"></div>
+    <div class="start-text">TOCA PARA INICIAR</div>
+  </div>
+
+  <button class="skip" id="skipBtn">SALTAR ▶</button>
+
+  <div class="loading" id="loading">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">CARGANDO MUNDO<span class="loading-dots"></span></div>
+  </div>
+
+  <script>
+    const video     = document.getElementById('video');
+    const overlay   = document.getElementById('startOverlay');
+    const skipBtn   = document.getElementById('skipBtn');
+    const progress  = document.getElementById('progress');
+    const loading   = document.getElementById('loading');
+
+    function irAlMundo() {
+      // Actualizar progreso de partida
+      try {
+        const save = JSON.parse(localStorage.getItem('foodquest_save') || '{}');
+        save.progress = 'world';
+        save.lastPlayed = Date.now();
+        localStorage.setItem('foodquest_save', JSON.stringify(save));
+      } catch (e) {}
+
+      // Mostrar pantalla de carga, luego redirigir
+      loading.classList.add('visible');
+      setTimeout(() => { window.location.href = 'world.html'; }, 1200);
+    }
+
+    // Intentar autoplay con sonido; si falla, mostrar overlay
+    video.play().then(() => {
+      overlay.classList.add('hidden');
+    }).catch(() => {
+      // Autoplay bloqueado: el usuario debe interactuar
+      overlay.classList.remove('hidden');
+    });
+
+    // Click en overlay = iniciar
+    overlay.addEventListener('click', () => {
+      video.play();
+      overlay.classList.add('hidden');
+    });
+
+    // Actualizar barra de progreso
+    video.addEventListener('timeupdate', () => {
+      if (video.duration) {
+        progress.style.width = (video.currentTime / video.duration * 100) + '%';
+      }
+    });
+
+    // Al terminar el video → ir al mundo
+    video.addEventListener('ended', irAlMundo);
+
+    // Botón saltar
+    skipBtn.addEventListener('click', irAlMundo);
+
+    // Tecla Esc o Enter = saltar
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || e.key === 'Enter') irAlMundo();
+    });
+
+    // Fallback: si el video falla, ir al mundo después de unos segundos
+    video.addEventListener('error', () => {
+      console.warn('Error cargando video; redirigiendo...');
+      setTimeout(irAlMundo, 1500);
+    });
+  </script>
+</body>
+</html>

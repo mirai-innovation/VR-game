@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mundo Seguro - Bosque Encantado Voxel</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <!-- Fuente japonesa para el diálogo del guía -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@500;700&display=swap" rel="stylesheet">
+
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #000; }
+    #hud {
+      position: fixed; top: 10px; left: 10px; z-index: 9999;
+      background: rgba(0,0,0,0.55); color: #fff; padding: 8px 12px;
+      font-family: monospace; border-radius: 6px; font-size: 13px;
+      pointer-events: none; line-height: 1.5;
+    }
+    #hud b { color: #FFD166; }
+
+    #btn-menu {
+      position: fixed; top: 10px; right: 10px; z-index: 9999;
+      background: rgba(107,63,160,0.85); color: #fff;
+      border: 2px solid #FFD166; padding: 8px 14px;
+      font-family: monospace; font-size: 12px;
+      letter-spacing: 2px; cursor: pointer;
+      text-shadow: 1px 1px 0 #2a1f4a;
+      box-shadow: 2px 2px 0 rgba(0,0,0,0.4);
+    }
+    #btn-menu:hover { background: rgba(139,95,192,0.95); }
+  </style>
+</head>
+<body>
+
+  <div id="hud">
+    <b>Mundo Seguro</b><br>
+    Calma: <span id="calma-valor">0.80</span><br>
+    <small>WASD = mover · Ratón = mirar</small>
+  </div>
+
+  <button id="btn-menu" onclick="window.location.href='index.html'">◀ MENÚ</button>
+
+  <a-scene background="color: #87CEEB"
+           fog="type: linear; color: #C9E4F5; near: 25; far: 120"
+           renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true">
+
+    <!-- ============================================================
+         COMPONENTES PERSONALIZADOS
+         Generadores procedurales para mantener limpio el markup
+         ============================================================ -->
+    <script>
+      // -----------------------------------------------------------
+      // Componente: árbol voxel con variantes
+      // -----------------------------------------------------------
+      // -----------------------------------------------------------
+      // Componente: hacer que un elemento mire siempre a otro
+      // (usado por la burbuja de diálogo para encarar al jugador)
+      // -----------------------------------------------------------
+      // -----------------------------------------------------------
+      // Componente: burbuja de diálogo dibujada en canvas
+      // (necesario porque a-text no soporta kanji/hiragana)
+      // -----------------------------------------------------------
+      AFRAME.registerComponent('canvas-dialog', {
+        schema: {
+          text:     { default: '' },
+          color:    { default: '#2A1A4A' },
+          bg:       { default: 'rgba(255,255,255,0.96)' },
+          border:   { default: '#6B3FA0' },
+          fontSize: { default: 56 },
+        },
+        init: function () {
+          this.canvas = document.createElement('canvas');
+          this.canvas.width  = 1024;
+          this.canvas.height = 420;
+          this.texture = new THREE.CanvasTexture(this.canvas);
+          this.texture.minFilter = THREE.LinearFilter;
+          this.texture.magFilter = THREE.LinearFilter;
+
+          this.el.addEventListener('loaded', () => {
+            const mesh = this.el.getObject3D('mesh');
+            if (mesh) {
+              mesh.material = new THREE.MeshBasicMaterial({
+                map: this.texture, transparent: true, side: THREE.DoubleSide
+              });
+            }
+          });
+
+          // Esperar a que cargue la fuente japonesa antes de pintar
+          if (document.fonts && document.fonts.ready) {
+            document.fonts.ready.then(() => this.draw());
+          }
+          this.draw();
+        },
+        update: function () { this.draw(); },
+        draw: function () {
+          const c = this.canvas;
+          const ctx = c.getContext('2d');
+          const d = this.data;
+          ctx.clearRect(0, 0, c.width, c.height);
+
+          // Marco exterior (borde violeta)
+          this.roundedRect(ctx, 0, 0, c.width, c.height - 50, 40);
+          ctx.fillStyle = d.border;
+          ctx.fill();
+
+          // Fondo blanco interior
+          this.roundedRect(ctx, 12, 12, c.width - 24, c.height - 50 - 24, 32);
+          ctx.fillStyle = d.bg;
+          ctx.fill();
+
+          // Pico de la burbuja apuntando al guía
+          ctx.fillStyle = d.border;
+          ctx.beginPath();
+          ctx.moveTo(c.width * 0.28, c.height - 50);
+          ctx.lineTo(c.width * 0.40, c.height - 50);
+          ctx.lineTo(c.width * 0.30, c.height - 5);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = d.bg;
+          ctx.beginPath();
+          ctx.moveTo(c.width * 0.30, c.height - 52);
+          ctx.lineTo(c.width * 0.38, c.height - 52);
+          ctx.lineTo(c.width * 0.31, c.height - 18);
+          ctx.closePath();
+          ctx.fill();
+
+          // Texto
+          ctx.fillStyle = d.color;
+          ctx.font = `700 ${d.fontSize}px "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const lines = this.wrapJP(ctx, d.text, c.width - 120);
+          const lh = d.fontSize * 1.35;
+          const topPad = 30;
+          const innerH = c.height - 50 - 60;
+          const startY = topPad + innerH/2 - (lines.length - 1) * lh / 2;
+          lines.forEach((line, i) => {
+            ctx.fillText(line, c.width/2, startY + i * lh);
+          });
+
+          // Flecha ▼ parpadeante (dibujada estática, opacidad la maneja la animación de A-Frame)
+          ctx.fillStyle = d.border;
+          ctx.font = `700 38px "Noto Sans JP", sans-serif`;
+          ctx.fillText('▼', c.width - 60, c.height - 80);
+
+          this.texture.needsUpdate = true;
+        },
+        roundedRect: function (ctx, x, y, w, h, r) {
+          ctx.beginPath();
+          ctx.moveTo(x + r, y);
+          ctx.arcTo(x + w, y, x + w, y + h, r);
+          ctx.arcTo(x + w, y + h, x, y + h, r);
+          ctx.arcTo(x, y + h, x, y, r);
+          ctx.arcTo(x, y, x + w, y, r);
+          ctx.closePath();
+        },
+        // Word-wrap caracter a caracter (japonés no usa espacios)
+        wrapJP: function (ctx, text, maxWidth) {
+          const lines = [];
+          let line = '';
+          for (const ch of text) {
+            if (ch === '\n') { lines.push(line); line = ''; continue; }
+            const test = line + ch;
+            if (ctx.measureText(test).width > maxWidth && line.length > 0) {
+              lines.push(line);
+              line = ch;
+            } else {
+              line = test;
+            }
+          }
+          if (line) lines.push(line);
+          return lines;
+        }
+      });
+
+      AFRAME.registerComponent('look-at', {
+        schema: { type: 'selector' },
+        tick: function () {
+          if (!this.data) return;
+          const targetPos = new THREE.Vector3();
+          this.data.object3D.getWorldPosition(targetPos);
+          const selfPos = new THREE.Vector3();
+          this.el.object3D.getWorldPosition(selfPos);
+          // Mirar sólo en Y para que el texto no se incline
+          targetPos.y = selfPos.y;
+          this.el.object3D.lookAt(targetPos);
+        }
+      });
+
+      AFRAME.registerComponent('voxel-tree', {
+        schema: {
+          variant:    { default: 'oak' },   // oak, pine, cherry, magic
+          height:     { default: 4 },       // altura del tronco
+          seed:       { default: 0 },
+        },
+        init: function () {
+          const d = this.data;
+          const palette = {
+            oak:    { trunk: '#6B4423', leaves: ['#3FA34D', '#4CAF50', '#5DBB63'] },
+            pine:   { trunk: '#5A3A1F', leaves: ['#2D6A3E', '#266B3F', '#1F5C36'] },
+            cherry: { trunk: '#7A4A2A', leaves: ['#F8B6D0', '#F291B5', '#FFC9DD'] },
+            magic:  { trunk: '#4A3A6B', leaves: ['#9D6BFF', '#B584FF', '#7A4FE0'] },
+          };
+          const pal = palette[d.variant] || palette.oak;
+          const trunkColor = pal.trunk;
+          const leafColor  = pal.leaves[d.seed % pal.leaves.length];
+
+          // Tronco
+          const trunk = document.createElement('a-box');
+          trunk.setAttribute('position', `0 ${d.height/2} 0`);
+          trunk.setAttribute('width', 0.9);
+          trunk.setAttribute('depth', 0.9);
+          trunk.setAttribute('height', d.height);
+          trunk.setAttribute('color', trunkColor);
+          this.el.appendChild(trunk);
+
+          // Copa: dos cubos apilados para dar volumen voxel
+          if (d.variant === 'pine') {
+            // Pino: pirámide de 3 niveles
+            for (let i = 0; i < 3; i++) {
+              const layer = document.createElement('a-box');
+              const size = 3.5 - i * 0.8;
+              layer.setAttribute('position', `0 ${d.height + 0.5 + i * 1.1} 0`);
+              layer.setAttribute('width', size);
+              layer.setAttribute('depth', size);
+              layer.setAttribute('height', 1.2);
+              layer.setAttribute('color', leafColor);
+              this.el.appendChild(layer);
+            }
+          } else {
+            const c1 = document.createElement('a-box');
+            c1.setAttribute('position', `0 ${d.height + 0.8} 0`);
+            c1.setAttribute('width',  3 + (d.seed % 2) * 0.5);
+            c1.setAttribute('depth',  3 + (d.seed % 2) * 0.5);
+            c1.setAttribute('height', 2.2);
+            c1.setAttribute('color',  leafColor);
+            this.el.appendChild(c1);
+
+            const c2 = document.createElement('a-box');
+            c2.setAttribute('position', `${(d.seed % 3 - 1) * 0.3} ${d.height + 2.2} ${(d.seed % 2 - 0.5) * 0.6}`);
+            c2.setAttribute('width', 1.8);
+            c2.setAttribute('depth', 1.8);
+            c2.setAttribute('height', 1.2);
+            c2.setAttribute('color', leafColor);
+            this.el.appendChild(c2);
+
+            // Variante mágica: brillo emisivo en la copa
+            if (d.variant === 'magic') {
+              c1.setAttribute('material', `color: ${leafColor}; emissive: ${leafColor}; emissiveIntensity: 0.4`);
+              c2.setAttribute('material', `color: ${leafColor}; emissive: ${leafColor}; emissiveIntensity: 0.6`);
+            }
+          }
+        }
+      });
+
+      // -----------------------------------------------------------
+      // Componente: portal mágico (anillo de bloques con animación)
+      // -----------------------------------------------------------
+      AFRAME.registerComponent('magic-portal', {
+        schema: {
+          color:    { default: '#9D6BFF' },
+          radius:   { default: 2 },
+          segments: { default: 16 },
+        },
+        init: function () {
+          const d = this.data;
+          // Marco de bloques de piedra rodeando el portal
+          for (let i = 0; i < d.segments; i++) {
+            const a = (i / d.segments) * Math.PI * 2;
+            const x = Math.cos(a) * d.radius;
+            const y = Math.sin(a) * d.radius + d.radius;
+            const block = document.createElement('a-box');
+            block.setAttribute('position', `${x} ${y} 0`);
+            block.setAttribute('width', 0.5);
+            block.setAttribute('height', 0.5);
+            block.setAttribute('depth', 0.7);
+            block.setAttribute('material',
+              `color: #4A3A6B; emissive: ${d.color}; emissiveIntensity: 0.3`);
+            this.el.appendChild(block);
+          }
+          // Plano del "vórtice" interior
+          const swirl = document.createElement('a-circle');
+          swirl.setAttribute('position', `0 ${d.radius} 0.05`);
+          swirl.setAttribute('radius', d.radius - 0.3);
+          swirl.setAttribute('material',
+            `color: ${d.color}; emissive: ${d.color}; emissiveIntensity: 0.9; opacity: 0.75; transparent: true; side: double`);
+          swirl.setAttribute('animation',
+            'property: rotation; to: 0 0 360; loop: true; dur: 6000; easing: linear');
+          this.el.appendChild(swirl);
+
+          // Luz puntual del portal (refuerza la magia)
+          const light = document.createElement('a-light');
+          light.setAttribute('type', 'point');
+          light.setAttribute('color', d.color);
+          light.setAttribute('intensity', 1.2);
+          light.setAttribute('distance', 10);
+          light.setAttribute('position', `0 ${d.radius} 0.5`);
+          this.el.appendChild(light);
+        }
+      });
+
+      // -----------------------------------------------------------
+      // Componente: luciérnaga flotante
+      // -----------------------------------------------------------
+      AFRAME.registerComponent('firefly', {
+        schema: {
+          color: { default: '#FFE066' },
+          range: { default: 2 },
+        },
+        init: function () {
+          const d = this.data;
+          const dot = document.createElement('a-sphere');
+          dot.setAttribute('radius', 0.08);
+          dot.setAttribute('material',
+            `color: ${d.color}; emissive: ${d.color}; emissiveIntensity: 1`);
+          this.el.appendChild(dot);
+
+          this.origin = this.el.object3D.position.clone();
+          this.t = Math.random() * 100;
+        },
+        tick: function (time, delta) {
+          this.t += delta / 1000;
+          const r = this.data.range;
+          this.el.object3D.position.x = this.origin.x + Math.sin(this.t * 0.7) * r;
+          this.el.object3D.position.y = this.origin.y + Math.cos(this.t * 1.1) * r * 0.5;
+          this.el.object3D.position.z = this.origin.z + Math.cos(this.t * 0.5) * r;
+        }
+      });
+
+      // -----------------------------------------------------------
+      // Componente: poblar el bosque proceduralmente
+      // -----------------------------------------------------------
+      AFRAME.registerComponent('forest-spawner', {
+        schema: {
+          count:     { default: 40 },
+          radiusMin: { default: 15 },
+          radiusMax: { default: 55 },
+          exclude:   { default: 8 }, // distancia segura desde el centro
+        },
+        init: function () {
+          const d = this.data;
+          const variants = ['oak', 'oak', 'oak', 'pine', 'pine', 'cherry', 'magic'];
+          let seed = 1;
+
+          for (let i = 0; i < d.count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist  = d.radiusMin + Math.random() * (d.radiusMax - d.radiusMin);
+            const x = Math.cos(angle) * dist;
+            const z = Math.sin(angle) * dist;
+
+            // No plantar muy cerca del jugador/templo
+            if (Math.sqrt(x*x + z*z) < d.exclude) continue;
+
+            const tree = document.createElement('a-entity');
+            tree.setAttribute('position', `${x} 0 ${z}`);
+            tree.setAttribute('voxel-tree', {
+              variant: variants[Math.floor(Math.random() * variants.length)],
+              height:  3 + Math.floor(Math.random() * 4),
+              seed:    seed++,
+            });
+            this.el.appendChild(tree);
+          }
+
+          // Setas y rocas decorativas dispersas
+          const mushroomColors = ['#E63946', '#F77F00', '#FFD166', '#FFFFFF'];
+          for (let i = 0; i < 25; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist  = 8 + Math.random() * 45;
+            const x = Math.cos(angle) * dist;
+            const z = Math.sin(angle) * dist;
+
+            const group = document.createElement('a-entity');
+            group.setAttribute('position', `${x} 0 ${z}`);
+
+            // Tallo
+            const stem = document.createElement('a-box');
+            stem.setAttribute('width', 0.25);
+            stem.setAttribute('depth', 0.25);
+            stem.setAttribute('height', 0.5);
+            stem.setAttribute('position', '0 0.25 0');
+            stem.setAttribute('color', '#F5E6CB');
+            group.appendChild(stem);
+
+            // Sombrero
+            const cap = document.createElement('a-box');
+            cap.setAttribute('width', 0.7);
+            cap.setAttribute('depth', 0.7);
+            cap.setAttribute('height', 0.4);
+            cap.setAttribute('position', '0 0.7 0');
+            cap.setAttribute('color', mushroomColors[i % mushroomColors.length]);
+            group.appendChild(cap);
+
+            this.el.appendChild(group);
+          }
+
+          // Matas de hierba (cubitos pequeños verdes)
+          for (let i = 0; i < 80; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist  = 3 + Math.random() * 50;
+            const tuft = document.createElement('a-box');
+            tuft.setAttribute('position', `${Math.cos(angle)*dist} 0.15 ${Math.sin(angle)*dist}`);
+            tuft.setAttribute('width', 0.3);
+            tuft.setAttribute('depth', 0.3);
+            tuft.setAttribute('height', 0.3);
+            tuft.setAttribute('color', Math.random() > 0.5 ? '#4FA85A' : '#5DBB63');
+            this.el.appendChild(tuft);
+          }
+
+          // Luciérnagas dispersas
+          const flyColors = ['#FFE066', '#A6F0FF', '#FFB6E1', '#B8FFB8'];
+          for (let i = 0; i < 30; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const dist  = 5 + Math.random() * 35;
+            const fly = document.createElement('a-entity');
+            fly.setAttribute('position',
+              `${Math.cos(angle)*dist} ${1 + Math.random()*3} ${Math.sin(angle)*dist}`);
+            fly.setAttribute('firefly', {
+              color: flyColors[i % flyColors.length],
+              range: 1.5 + Math.random() * 2,
+            });
+            this.el.appendChild(fly);
+          }
+        }
+      });
+    </script>
+
+    <a-assets>
+      <a-mixin id="piedra" material="color: #B8B8B8; roughness: 1"></a-mixin>
+      <a-mixin id="piedra-musgo" material="color: #7A8C5C; roughness: 1"></a-mixin>
+    </a-assets>
+
+    <!-- ============================================================
+         CIELO Y LUCES
+         ============================================================ -->
+    <a-sky color="#A8DCF0"></a-sky>
+
+    <!-- Sol -->
+    <a-entity position="-20 30 -15">
+      <a-box width="3" height="3" depth="3"
+             material="color: #FFF4D6; emissive: #FFE9A8; emissiveIntensity: 1"></a-box>
+    </a-entity>
+
+    <!-- Nubes voxel flotantes -->
+    <a-entity id="nubes">
+      <a-entity position="-15 18 -25">
+        <a-box width="5" height="2" depth="3" color="#FFFFFF"></a-box>
+        <a-box position="2 0.5 0.5" width="3" height="1.5" depth="2.5" color="#FFFFFF"></a-box>
+        <a-box position="-1.5 0.3 -0.5" width="2.5" height="1.5" depth="2" color="#FFFFFF"></a-box>
+      </a-entity>
+      <a-entity position="20 22 -10">
+        <a-box width="6" height="2" depth="3.5" color="#FFFFFF"></a-box>
+        <a-box position="2.5 0.5 0" width="3" height="1.5" depth="2.5" color="#FFFFFF"></a-box>
+      </a-entity>
+      <a-entity position="5 20 25">
+        <a-box width="4" height="1.8" depth="3" color="#FFFFFF"></a-box>
+        <a-box position="-1.8 0.3 0.3" width="2.5" height="1.3" depth="2" color="#FFFFFF"></a-box>
+      </a-entity>
+    </a-entity>
+
+    <!-- =========================================================
+         ILUMINACIÓN DINÁMICA (REACTIVA AL EEG)
+         #luz-calma: intensity ALTA = calmado / BAJA = ansioso
+         ========================================================= -->
+    <a-light id="luz-calma" type="ambient" color="#FFF4D6" intensity="0.8"></a-light>
+    <a-light type="directional" color="#FFFFFF" intensity="0.7" position="-2 8 4"
+             light="castShadow: false"></a-light>
+    <a-light type="hemisphere" color="#A8DCF0" groundColor="#6CBB3C" intensity="0.4"></a-light>
+
+    <!-- ============================================================
+         TERRENO: pradera principal + capa de tierra
+         ============================================================ -->
+    <a-plane position="0 0.01 0" rotation="-90 0 0" width="120" height="120"
+             material="color: #6CBB3C; roughness: 1"></a-plane>
+    <a-box position="0 -0.55 0" width="120" height="1" depth="120" color="#8B7355"></a-box>
+
+    <!-- Río voxel atravesando el bosque -->
+    <a-entity id="rio">
+      <a-box position="-25 0.05 15" width="60" height="0.15" depth="4"
+             rotation="0 -30 0"
+             material="color: #4FA8D1; opacity: 0.85; transparent: true"></a-box>
+      <a-box position="-25 -0.1 15" width="60" height="0.3" depth="5"
+             rotation="0 -30 0" color="#3A7BA0"></a-box>
+    </a-entity>
+
+    <!-- Camino de piedra desde el spawn al templo -->
+    <a-entity id="camino">
+      <a-box position="0 0.08 5"  width="2" height="0.15" depth="1.5" color="#C9C9C9"></a-box>
+      <a-box position="0 0.08 3"  width="2" height="0.15" depth="1.5" color="#B5B5B5"></a-box>
+      <a-box position="0 0.08 1"  width="2" height="0.15" depth="1.5" color="#C9C9C9"></a-box>
+      <a-box position="0 0.08 -1" width="2" height="0.15" depth="1.5" color="#B5B5B5"></a-box>
+      <a-box position="0 0.08 -3" width="2" height="0.15" depth="1.5" color="#C9C9C9"></a-box>
+    </a-entity>
+
+    <!-- ============================================================
+         PERSONAJE GUÍA (estilo Roblox/Minecraft)
+         Saluda al jugador al iniciar y le explica los controles.
+         Construido con primitivas; animado vía componentes.
+         ============================================================ -->
+    <a-entity id="guia" position="2.5 0 6" look-at="#rig">
+
+      <!-- Sombra suave en el suelo -->
+      <a-circle position="0 0.02 0" rotation="-90 0 0" radius="0.7"
+                material="color: #000; opacity: 0.25; transparent: true"></a-circle>
+
+      <!-- Cuerpo del personaje: se balancea suavemente (idle bob) -->
+      <a-entity id="guia-cuerpo"
+                animation="property: position; from: 0 0 0; to: 0 0.08 0; dir: alternate; dur: 1400; loop: true; easing: easeInOutSine">
+
+        <!-- Piernas -->
+        <a-box position="-0.18 0.4 0" width="0.32" height="0.8" depth="0.32" color="#3B5BA8"></a-box>
+        <a-box position=" 0.18 0.4 0" width="0.32" height="0.8" depth="0.32" color="#3B5BA8"></a-box>
+        <!-- Zapatos -->
+        <a-box position="-0.18 0.05 0.05" width="0.34" height="0.15" depth="0.4" color="#2A1A0A"></a-box>
+        <a-box position=" 0.18 0.05 0.05" width="0.34" height="0.15" depth="0.4" color="#2A1A0A"></a-box>
+
+        <!-- Torso (túnica de mago) -->
+        <a-box position="0 1.15 0" width="0.75" height="0.9" depth="0.4" color="#6B3FA0"></a-box>
+        <!-- Cinturón -->
+        <a-box position="0 0.78 0" width="0.78" height="0.12" depth="0.42" color="#3A1F5C"></a-box>
+        <!-- Detalle dorado en pecho -->
+        <a-box position="0 1.2 0.21" width="0.25" height="0.25" depth="0.05"
+               material="color: #F2C744; emissive: #5C4A10; emissiveIntensity: 0.5"></a-box>
+
+        <!-- Brazo izquierdo (estático, sosteniendo un bastón) -->
+        <a-entity position="-0.5 1.4 0">
+          <a-box position="0 -0.3 0" width="0.25" height="0.75" depth="0.25" color="#6B3FA0"></a-box>
+          <!-- Mano -->
+          <a-box position="0 -0.75 0" width="0.22" height="0.2" depth="0.22" color="#F5C9A0"></a-box>
+          <!-- Bastón -->
+          <a-box position="0 -0.2 0.05" width="0.08" height="2.2" depth="0.08" color="#5C4326"></a-box>
+          <!-- Cristal del bastón -->
+          <a-box position="0 0.95 0.05" width="0.3" height="0.3" depth="0.3"
+                 material="color: #4FC3F7; emissive: #4FC3F7; emissiveIntensity: 1"
+                 animation="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear"></a-box>
+        </a-entity>
+
+        <!-- Brazo derecho (saluda con animación de vaivén) -->
+        <a-entity position="0.5 1.55 0"
+                  animation="property: rotation; from: -30 0 20; to: -30 0 -25; dir: alternate; dur: 700; loop: true; easing: easeInOutSine">
+          <a-box position="0 -0.3 0" width="0.25" height="0.75" depth="0.25" color="#6B3FA0"></a-box>
+          <a-box position="0 -0.75 0" width="0.22" height="0.2" depth="0.22" color="#F5C9A0"></a-box>
+        </a-entity>
+
+        <!-- Cabeza con leve giro de curiosidad -->
+        <a-entity position="0 2 0"
+                  animation="property: rotation; from: 0 -10 0; to: 0 10 0; dir: alternate; dur: 3000; loop: true; easing: easeInOutSine">
+          <!-- Cabeza -->
+          <a-box width="0.7" height="0.7" depth="0.7" color="#F5C9A0"></a-box>
+          <!-- Ojos -->
+          <a-box position="-0.16 0.05 0.36" width="0.1" height="0.12" depth="0.05" color="#1A1A1A"></a-box>
+          <a-box position=" 0.16 0.05 0.36" width="0.1" height="0.12" depth="0.05" color="#1A1A1A"></a-box>
+          <!-- Brillo en ojos -->
+          <a-box position="-0.13 0.08 0.385" width="0.03" height="0.04" depth="0.01" color="#FFFFFF"></a-box>
+          <a-box position=" 0.19 0.08 0.385" width="0.03" height="0.04" depth="0.01" color="#FFFFFF"></a-box>
+          <!-- Sonrisa -->
+          <a-box position="0 -0.15 0.36" width="0.2" height="0.05" depth="0.05" color="#1A1A1A"></a-box>
+          <!-- Sombrero de mago (cono escalonado voxel) -->
+          <a-box position="0 0.45 0" width="0.85" height="0.15" depth="0.85" color="#3A1F5C"></a-box>
+          <a-box position="0 0.6  0" width="0.65" height="0.2" depth="0.65" color="#4A2A6B"></a-box>
+          <a-box position="0 0.8  0" width="0.45" height="0.2" depth="0.45" color="#5A3578"></a-box>
+          <a-box position="0 1.0  0" width="0.25" height="0.2" depth="0.25" color="#6B3FA0"></a-box>
+          <!-- Estrella del sombrero -->
+          <a-box position="0 1.18 0" width="0.15" height="0.15" depth="0.15"
+                 material="color: #FFD166; emissive: #FFD166; emissiveIntensity: 1"></a-box>
+        </a-entity>
+
+      </a-entity>
+
+      <!-- ====================================================
+           BURBUJA DE DIÁLOGO FLOTANTE
+           Mira siempre al jugador (look-at component abajo).
+           ==================================================== -->
+      <a-entity id="dialogo" position="0 3.7 0" look-at="#rig"
+                animation="property: position; from: 0 3.7 0; to: 0 3.85 0; dir: alternate; dur: 1800; loop: true; easing: easeInOutSine">
+        <!-- Plano único con canvas: dibuja fondo, borde, pico y texto japonés -->
+        <a-plane id="dialogo-plano"
+                 width="4.4" height="1.8"
+                 canvas-dialog="text: こんにちは！"></a-plane>
+      </a-entity>
+
+      <!-- Halo de luz alrededor del guía -->
+      <a-light type="point" color="#B584FF" intensity="0.6" distance="6" position="0 2 0"></a-light>
+
+      <!-- Partículas: pequeñas chispas mágicas alrededor -->
+      <a-entity position="0 1.5 0">
+        <a-box position="0.8 0.5 0" width="0.1" height="0.1" depth="0.1"
+               material="color: #FFD166; emissive: #FFD166; emissiveIntensity: 1"
+               animation="property: position; from: 0.8 0.5 0; to: 0.8 1.5 0; dir: alternate; dur: 1500; loop: true; easing: easeInOutSine"></a-box>
+        <a-box position="-0.7 0.8 0.2" width="0.1" height="0.1" depth="0.1"
+               material="color: #FF6B9D; emissive: #FF6B9D; emissiveIntensity: 1"
+               animation="property: position; from: -0.7 0.8 0.2; to: -0.7 1.8 0.2; dir: alternate; dur: 1800; loop: true; easing: easeInOutSine"></a-box>
+        <a-box position="0.3 1 -0.5" width="0.08" height="0.08" depth="0.08"
+               material="color: #4FC3F7; emissive: #4FC3F7; emissiveIntensity: 1"
+               animation="property: position; from: 0.3 1 -0.5; to: 0.3 2 -0.5; dir: alternate; dur: 2200; loop: true; easing: easeInOutSine"></a-box>
+      </a-entity>
+    </a-entity>
+
+    <!-- ============================================================
+         TEMPLO CENTRAL (más grande y detallado)
+         ============================================================ -->
+    <a-entity id="templo" position="0 0 -8">
+      <!-- Plataforma escalonada -->
+      <a-box position="0 0.5 0" width="12" height="1" depth="12" color="#A8A8A8"></a-box>
+      <a-box position="0 1.3 0" width="10" height="0.6" depth="10" color="#C2C2C2"></a-box>
+      <a-box position="0 1.7 0" width="8.5" height="0.2" depth="8.5" color="#D4C896"></a-box>
+
+      <!-- 4 columnas grandes -->
+      <a-entity id="columnas">
+        <a-entity position=" 3.5 0 -3.5">
+          <a-box position="0 1 0" width="1.2" height="0.8" depth="1.2" color="#9E9E9E"></a-box>
+          <a-box position="0 3 0" width="0.9" height="4" depth="0.9" color="#E0E0E0"></a-box>
+          <a-box position="0 5.2 0" width="1.2" height="0.5" depth="1.2" color="#9E9E9E"></a-box>
+        </a-entity>
+        <a-entity position="-3.5 0 -3.5">
+          <a-box position="0 1 0" width="1.2" height="0.8" depth="1.2" color="#9E9E9E"></a-box>
+          <a-box position="0 3 0" width="0.9" height="4" depth="0.9" color="#E0E0E0"></a-box>
+          <a-box position="0 5.2 0" width="1.2" height="0.5" depth="1.2" color="#9E9E9E"></a-box>
+        </a-entity>
+        <a-entity position=" 3.5 0  3.5">
+          <a-box position="0 1 0" width="1.2" height="0.8" depth="1.2" color="#9E9E9E"></a-box>
+          <a-box position="0 3 0" width="0.9" height="4" depth="0.9" color="#E0E0E0"></a-box>
+          <a-box position="0 5.2 0" width="1.2" height="0.5" depth="1.2" color="#9E9E9E"></a-box>
+        </a-entity>
+        <a-entity position="-3.5 0  3.5">
+          <a-box position="0 1 0" width="1.2" height="0.8" depth="1.2" color="#9E9E9E"></a-box>
+          <a-box position="0 3 0" width="0.9" height="4" depth="0.9" color="#E0E0E0"></a-box>
+          <a-box position="0 5.2 0" width="1.2" height="0.5" depth="1.2" color="#9E9E9E"></a-box>
+        </a-entity>
+      </a-entity>
+
+      <!-- Techo escalonado tipo pagoda -->
+      <a-box position="0 5.8 0" width="9.5" height="0.4" depth="9.5" color="#9E7B4A"></a-box>
+      <a-box position="0 6.2 0" width="8" height="0.4" depth="8" color="#7A5C36"></a-box>
+      <a-box position="0 6.6 0" width="6" height="0.4" depth="6" color="#5C4326"></a-box>
+      <a-box position="0 7 0" width="3" height="0.4" depth="3" color="#7A5C36"></a-box>
+
+      <!-- Reliquia central (foco del templo, brilla con la calma) -->
+      <a-entity id="reliquia-grupo" position="0 2.8 0">
+        <a-box id="reliquia" width="1.2" height="1.2" depth="1.2"
+               material="color: #F2C744; emissive: #5C4A10; emissiveIntensity: 0.6"
+               animation="property: rotation; to: 0 360 0; loop: true; dur: 10000; easing: linear"
+               animation__bob="property: position; to: 0 0.4 0; dir: alternate; dur: 2500; loop: true; easing: easeInOutSine"></a-box>
+        <!-- Anillo de cubos pequeños orbitando -->
+        <a-entity animation="property: rotation; to: 0 -360 0; loop: true; dur: 12000; easing: linear">
+          <a-box position="2 0 0"  width="0.3" height="0.3" depth="0.3"
+                 material="color: #FFD166; emissive: #FFD166; emissiveIntensity: 0.8"></a-box>
+          <a-box position="-2 0 0" width="0.3" height="0.3" depth="0.3"
+                 material="color: #FFD166; emissive: #FFD166; emissiveIntensity: 0.8"></a-box>
+          <a-box position="0 0 2"  width="0.3" height="0.3" depth="0.3"
+                 material="color: #FFD166; emissive: #FFD166; emissiveIntensity: 0.8"></a-box>
+          <a-box position="0 0 -2" width="0.3" height="0.3" depth="0.3"
+                 material="color: #FFD166; emissive: #FFD166; emissiveIntensity: 0.8"></a-box>
+        </a-entity>
+      </a-entity>
+
+      <!-- Faroles voxel a los lados -->
+      <a-entity position="5 0 5">
+        <a-box position="0 1 0" width="0.4" height="2" depth="0.4" color="#3A2A1A"></a-box>
+        <a-box position="0 2.2 0" width="0.7" height="0.7" depth="0.7"
+               material="color: #FFE066; emissive: #FFE066; emissiveIntensity: 1"></a-box>
+      </a-entity>
+      <a-entity position="-5 0 5">
+        <a-box position="0 1 0" width="0.4" height="2" depth="0.4" color="#3A2A1A"></a-box>
+        <a-box position="0 2.2 0" width="0.7" height="0.7" depth="0.7"
+               material="color: #FFE066; emissive: #FFE066; emissiveIntensity: 1"></a-box>
+      </a-entity>
+    </a-entity>
+
+    <!-- ============================================================
+         PORTALES MÁGICOS (3 de distintos colores)
+         Cada uno podría llevar a un mini-juego/escena diferente
+         ============================================================ -->
+    <a-entity id="portal-1" position="-18 0 -5" rotation="0 30 0"
+              magic-portal="color: #9D6BFF; radius: 2.2"></a-entity>
+
+    <a-entity id="portal-2" position="18 0 -5" rotation="0 -30 0"
+              magic-portal="color: #4FC3F7; radius: 2.2"></a-entity>
+
+    <a-entity id="portal-3" position="0 0 -28" rotation="0 0 0"
+              magic-portal="color: #FF6B9D; radius: 2.5"></a-entity>
+
+    <!-- ============================================================
+         ISLA FLOTANTE con cristales (decorativa, refuerza fantasía)
+         ============================================================ -->
+    <a-entity id="isla-flotante" position="-25 10 -25"
+              animation="property: position; to: -25 11 -25; dir: alternate; dur: 4000; loop: true; easing: easeInOutSine">
+      <a-box position="0 0 0" width="6" height="0.6" depth="6" color="#6CBB3C"></a-box>
+      <a-box position="0 -0.6 0" width="5" height="0.5" depth="5" color="#8B7355"></a-box>
+      <a-box position="0 -1.2 0" width="3.5" height="0.5" depth="3.5" color="#6B4423"></a-box>
+      <a-box position="0 -1.8 0" width="2" height="0.5" depth="2" color="#4A2F1A"></a-box>
+      <!-- Cristales -->
+      <a-box position="1 0.8 1"  width="0.5" height="1.5" depth="0.5"
+             material="color: #B584FF; emissive: #B584FF; emissiveIntensity: 0.7; opacity: 0.85; transparent: true"></a-box>
+      <a-box position="-1 0.6 -0.5" width="0.4" height="1.1" depth="0.4"
+             material="color: #9D6BFF; emissive: #9D6BFF; emissiveIntensity: 0.7; opacity: 0.85; transparent: true"></a-box>
+      <a-box position="0.5 0.5 -1.2" width="0.3" height="0.9" depth="0.3"
+             material="color: #C9A6FF; emissive: #C9A6FF; emissiveIntensity: 0.7; opacity: 0.85; transparent: true"></a-box>
+    </a-entity>
+
+    <!-- Segunda isla flotante con árbol mágico -->
+    <a-entity id="isla-flotante-2" position="25 12 -20"
+              animation="property: position; to: 25 13.5 -20; dir: alternate; dur: 5000; loop: true; easing: easeInOutSine">
+      <a-box position="0 0 0" width="5" height="0.5" depth="5" color="#6CBB3C"></a-box>
+      <a-box position="0 -0.5 0" width="4" height="0.5" depth="4" color="#8B7355"></a-box>
+      <a-box position="0 -1 0" width="2.5" height="0.4" depth="2.5" color="#6B4423"></a-box>
+      <a-entity position="0 0.3 0" voxel-tree="variant: magic; height: 3; seed: 1"></a-entity>
+    </a-entity>
+
+    <!-- ============================================================
+         CABAÑA VOXEL (refugio acogedor)
+         ============================================================ -->
+    <a-entity id="cabana" position="15 0 12" rotation="0 -25 0">
+      <!-- Base de piedra -->
+      <a-box position="0 0.3 0" width="6" height="0.6" depth="5" color="#9E9E9E"></a-box>
+      <!-- Paredes de madera -->
+      <a-box position="0 1.6 -2.4" width="6" height="2.5" depth="0.2" color="#A0703D"></a-box>
+      <a-box position="0 1.6  2.4" width="6" height="2.5" depth="0.2" color="#A0703D"></a-box>
+      <a-box position="-2.9 1.6 0" width="0.2" height="2.5" depth="5" color="#8C6132"></a-box>
+      <a-box position=" 2.9 1.6 0" width="0.2" height="2.5" depth="5" color="#8C6132"></a-box>
+      <!-- Puerta -->
+      <a-box position="0 1.2 2.5" width="1.2" height="2" depth="0.1" color="#5C4326"></a-box>
+      <!-- Ventana iluminada -->
+      <a-box position="-1.8 1.8 2.5" width="0.8" height="0.8" depth="0.1"
+             material="color: #FFE066; emissive: #FFE066; emissiveIntensity: 0.8"></a-box>
+      <a-box position=" 1.8 1.8 2.5" width="0.8" height="0.8" depth="0.1"
+             material="color: #FFE066; emissive: #FFE066; emissiveIntensity: 0.8"></a-box>
+      <!-- Tejado a dos aguas (escalonado voxel) -->
+      <a-box position="0 3.1 0" width="6.5" height="0.3" depth="5.5" color="#7A3A2A"></a-box>
+      <a-box position="0 3.4 0" width="5.5" height="0.3" depth="4.5" color="#8B4226"></a-box>
+      <a-box position="0 3.7 0" width="4" height="0.3" depth="3.5" color="#9E4F2E"></a-box>
+      <a-box position="0 4 0" width="2" height="0.3" depth="2.5" color="#7A3A2A"></a-box>
+      <!-- Chimenea con humo voxel -->
+      <a-box position="2 4 -1" width="0.8" height="2" depth="0.8" color="#9E9E9E"></a-box>
+      <a-box position="2 5.5 -1" width="0.9" height="0.4" depth="0.9" color="#7A7A7A"></a-box>
+    </a-entity>
+
+    <!-- ============================================================
+         RUINAS / OBELISCO MÁGICO
+         ============================================================ -->
+    <a-entity id="obelisco" position="-15 0 15">
+      <!-- Base -->
+      <a-box position="0 0.5 0" width="3" height="1" depth="3" color="#A8A8A8"></a-box>
+      <a-box position="0 1.2 0" width="2.2" height="0.4" depth="2.2" color="#9E9E9E"></a-box>
+      <!-- Cuerpo del obelisco -->
+      <a-box position="0 3.5 0" width="1" height="4" depth="1" color="#C2C2C2"></a-box>
+      <a-box position="0 5.7 0" width="0.5" height="0.5" depth="0.5"
+             material="color: #4FC3F7; emissive: #4FC3F7; emissiveIntensity: 1"
+             animation="property: rotation; to: 0 360 0; loop: true; dur: 5000"></a-box>
+      <!-- Runas en la base -->
+      <a-box position="0 1.5 1.11" width="0.3" height="0.3" depth="0.05"
+             material="color: #4FC3F7; emissive: #4FC3F7; emissiveIntensity: 0.9"></a-box>
+      <a-box position="1.11 1.5 0" rotation="0 90 0" width="0.3" height="0.3" depth="0.05"
+             material="color: #4FC3F7; emissive: #4FC3F7; emissiveIntensity: 0.9"></a-box>
+    </a-entity>
+
+    <!-- ============================================================
+         BOSQUE PROCEDURAL (árboles + setas + hierba + luciérnagas)
+         ============================================================ -->
+    <a-entity id="bosque" forest-spawner="count: 50; radiusMin: 12; radiusMax: 55; exclude: 8"></a-entity>
+
+    <!-- ============================================================
+         JUGADOR
+         ============================================================ -->
+    <a-entity id="rig" position="0 1.6 10">
+      <a-camera wasd-controls="acceleration: 30" look-controls>
+        <a-cursor color="#FFFFFF"></a-cursor>
+      </a-camera>
+    </a-entity>
+
+  </a-scene>
+
+  <!-- ============================================================
+       SCRIPT EEG: conecta nivel de calma con la escena
+       ============================================================ -->
+  <script>
+    const luzCalma = document.getElementById('luz-calma');
+    const reliquia = document.getElementById('reliquia');
+    const hudValor = document.getElementById('calma-valor');
+
+    /**
+     * nivel: 0.0 (ansioso) -> 1.0 (calmado)
+     * Sustituye simularEEG() por tu fuente real (WebSocket/BLE/API).
+     */
+    function aplicarCalma(nivel) {
+      const c = Math.max(0, Math.min(1, nivel));
+      const intensidad = 0.2 + c * 1.0;
+
+      // Color: gris-frío (ansioso) -> cálido dorado (calmado)
+      const r = Math.round(143 + (255 - 143) * c);
+      const g = Math.round(169 + (244 - 169) * c);
+      const b = Math.round(184 + (214 - 184) * c);
+      const hex = `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+
+      luzCalma.setAttribute('intensity', intensidad);
+      luzCalma.setAttribute('color', hex);
+      if (reliquia) {
+        reliquia.setAttribute('material', 'emissiveIntensity', 0.2 + c * 0.8);
+      }
+      hudValor.textContent = c.toFixed(2);
+    }
+
+    // DEMO: onda sinusoidal. Sustituir por lectura EEG real.
+    // Ejemplo:
+    //   const ws = new WebSocket('wss://servidor/eeg');
+    //   ws.onmessage = (e) => aplicarCalma(JSON.parse(e.data).calma);
+    function simularEEG() {
+      const t = Date.now() / 5000;
+      aplicarCalma(0.65 + Math.sin(t) * 0.35);
+    }
+    setInterval(simularEEG, 250);
+
+    // =========================================================
+    // DIÁLOGO DEL GUÍA (japonés)
+    // - Ciclo de mensajes de bienvenida al iniciar.
+    // - Pistas contextuales cuando el jugador se acerca a un POI.
+    // =========================================================
+    const dialogoPlano = document.getElementById('dialogo-plano');
+
+    function setDialogo(texto) {
+      dialogoPlano.setAttribute('canvas-dialog', 'text', texto);
+    }
+
+    // Mensajes de bienvenida (se reproducen en bucle al inicio)
+    const mensajesBienvenida = [
+      'こんにちは、旅人さん！\nわたしはルマ、あなたのガイドだよ。',
+      'ここは「安全な世界」。\nなにもこわいものはないよ。',
+      'W A S D キーで\n森の中を歩いてみてね。',
+      'マウスを動かして\nまわりを見わたしてみよう！',
+      'まほうのポータルが\nきみを待っているよ ✨',
+      'こころが落ち着くと、\n世界はもっとかがやくよ。',
+      'ゆっくり探検してね。\nわたしはここにいるよ。'
+    ];
+
+    // Puntos de interés (POIs) y sus pistas contextuales
+    // r = radio en metros para activar la pista
+    const POIS = [
+      { id: 'templo',     pos: [0, -8],    r: 9,
+        msg: 'これは聖なる神殿。\n中央のお宝にちかづいてみて。' },
+      { id: 'portal1',    pos: [-18, -5],  r: 5,
+        msg: 'むらさきのポータル…\nふしぎな世界へつながっているよ。' },
+      { id: 'portal2',    pos: [18, -5],   r: 5,
+        msg: 'あおいポータルは\n空の上の世界へ行けるよ。' },
+      { id: 'portal3',    pos: [0, -28],   r: 5,
+        msg: 'ピンクのポータルは\n夢の国へつづいているよ。' },
+      { id: 'cabana',     pos: [15, 12],   r: 6,
+        msg: 'あったかいおうち。\nひとやすみできるよ。' },
+      { id: 'obelisco',   pos: [-15, 15],  r: 5,
+        msg: 'ふるい石碑…\nルーン文字がかがやいているね。' },
+      { id: 'isla1',      pos: [-25, -25], r: 8,
+        msg: '空にうかぶ島！\nクリスタルがキラキラしているよ。' },
+      { id: 'isla2',      pos: [25, -20],  r: 8,
+        msg: 'あの島には\nまほうの木が生えているよ。' },
+    ];
+
+    let mensajeActual = 0;
+    let modoContextual = null; // id del POI activo, o null si está en modo bienvenida
+
+    function siguienteBienvenida() {
+      if (modoContextual) return; // mientras hay pista contextual, no avanzamos
+      mensajeActual = (mensajeActual + 1) % mensajesBienvenida.length;
+      setDialogo(mensajesBienvenida[mensajeActual]);
+    }
+
+    // Primer mensaje
+    setTimeout(() => setDialogo(mensajesBienvenida[0]), 600);
+    // Avance automático cada 5s
+    setInterval(siguienteBienvenida, 5000);
+
+    // -------------------------------------------------------
+    // Componente de pistas contextuales: detecta proximidad
+    // del jugador a cada POI y muestra la pista correspondiente.
+    // -------------------------------------------------------
+    AFRAME.registerComponent('proximity-hints', {
+      init: function () {
+        this.cam = document.querySelector('a-camera').object3D;
+        this.tmp = new THREE.Vector3();
+        this.lastCheck = 0;
+      },
+      tick: function (time) {
+        if (time - this.lastCheck < 250) return;
+        this.lastCheck = time;
+        this.cam.getWorldPosition(this.tmp);
+
+        let activo = null;
+        for (const p of POIS) {
+          const dx = this.tmp.x - p.pos[0];
+          const dz = this.tmp.z - p.pos[1];
+          if (dx*dx + dz*dz < p.r * p.r) { activo = p; break; }
+        }
+
+        if (activo && activo.id !== modoContextual) {
+          modoContextual = activo.id;
+          setDialogo(activo.msg);
+        } else if (!activo && modoContextual) {
+          modoContextual = null;
+          setDialogo(mensajesBienvenida[mensajeActual]);
+        }
+      }
+    });
+
+    // Activar el detector de proximidad en la escena
+    document.querySelector('a-scene').setAttribute('proximity-hints', '');
+  </script>
+
+</body>
+</html>
